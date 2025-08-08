@@ -1,5 +1,6 @@
 import User from '../models/User.js'
 import jwt from 'jsonwebtoken'
+import {upsertStreamUser} from '../lib/stream.js'
  
 
 export async function signup(req, res) {
@@ -41,6 +42,19 @@ export async function signup(req, res) {
           password,
           profilePic:randomAvatar,
         });
+        
+        try {
+           await upsertStreamUser({
+             id: newUser._id.toString(),
+             name: newUser.fullName,
+             image: newUser.profilePic || "",
+           });  
+            console.log(`stream user created for ${newUser.fullName}`)
+        }
+        catch (e) {
+            console.error('Error creating Stream ',e)
+        }
+       
 
         const token = jwt.sign({
             userId: newUser._id
@@ -79,7 +93,7 @@ export async function login(req, res) {
         if (!user) {
             return res.status(401).json({success:false, message:"invalid email or password"})
         }
-        const isPasswordCorrect=await user.matchPassword(password)
+        const isPasswordCorrect = await user.matchPassword(password);
         
         if (!isPasswordCorrect) return res.status(401).json('invalid email or password')
         
@@ -112,5 +126,53 @@ export async function login(req, res) {
     }
 }
 export  function logout(req, res) {
-    res.send('logout page')
+    res.clearCookie('jwt');
+    res.status(200).json({
+        success: true,
+        message:"logout successfuly"
+    })
+}
+export async function onboard(req,res) {
+    try {
+        const userId = req.user._id;
+        const { fullName, bio, nativeLanguage, learningLanguage, location } = req.body;
+
+        if (!fullName || !bio || !nativeLanguage || !learningLanguage || !location) {
+            return res.status(401).json({
+                message: "all fields are required",
+                missingFields: [
+                    !fullName && "fullName",!bio&&"bio",!nativeLanguage && "nativeLanguage",!learningLanguage && "learningLanguage",!location && "location"
+                ].filter(Boolean)
+            })
+        }
+
+        const updatedUser=await User.findByIdAndUpdate(userId, {
+            ...req.body,
+            isOnboarded:true
+        }, { new: true })
+        if (!updatedUser) return res.status(404).json({ message: "user not found" })
+        
+         try {
+           await upsertStreamUser({
+             id: updatedUser._id.toString(),
+             name: updatedUser.fullName,
+             image: updatedUser.profilePic,
+           });
+           console.log(`stream user updated after onboarding  ${updatedUser.fullName}`);
+         } catch (e) {
+           console.error("Error creating Stream ", e);
+         }
+        
+        res.status(200).json({
+            success:true, user:updatedUser
+        })
+    }
+    catch (e) {
+        console.log("error happeing while onboarding user", e)
+        res.status(500).json({
+          success: false,
+          message: "please try again something went wrong! internal error",
+        });
+    }
+   
 }
